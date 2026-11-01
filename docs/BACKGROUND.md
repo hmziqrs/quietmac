@@ -60,12 +60,23 @@ dummy processes (one idle, one spinning) behaved exactly that way.
 
 ## The reaper's own cost
 
-The first reaper spawned `ps -axo pid,uid,comm` every 5 s. Each spawn costs
-**~45 ms of CPU** (it reads every process's arguments), which is ~0.9% of
-a core around the clock. It never showed up in the reaper's own CPU time,
-because the cost lands on `ps`. The current reaper reads the process table
-through libproc (`proc_listallpids`, `proc_pidinfo`, `proc_pidpath`) inside
-its own process: **~0.9 ms per scan**, 50× less.
+The first reaper spawned `ps -axo pid,uid,comm` every 5 s. Measured at that
+5 s poll, each scan costs **~57 ms of CPU** (`ps` reads every process's
+arguments): 1.1% of a core around the clock. It never showed up in the
+reaper's own CPU time, because the cost lands on the `ps` processes.
+
+The current reaper reads the process table through libproc
+(`proc_listallpids`, `proc_pidinfo`, `proc_pidpath`) inside its own
+process. It looks up only processes it hasn't seen before: **~1.05 ms per
+scan, 0.02% of a core**, about 55× less. A per-process lookup of all ~900
+processes on every scan cost ~4 ms, because each 5 s wake-up starts from a
+cold CPU.
+
+A pid counts as settled only once it looks the same on two consecutive
+scans. launchd starts a daemon as a root `xpcproxy` process that then
+exec()s into the daemon under the same pid, so a first look can be
+misleading. Everything is re-checked every 5 minutes, and whenever the kill
+list changes.
 
 Two libproc details matter:
 

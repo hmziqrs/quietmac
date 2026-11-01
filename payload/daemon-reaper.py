@@ -10,7 +10,8 @@ jetsam-managed ("supports pressured exit"), so SIGKILL is the same thing the
 kernel does to them under memory pressure.
 
 Cost: the process list comes straight from libproc (proc_listallpids +
-proc_pidinfo), ~1 ms of CPU per scan. Spawning `ps` instead costs ~45 ms per
+proc_pidinfo), and only processes not seen before are looked up: ~1 ms of CPU
+per 5 s scan (0.02% of a core). Spawning `ps` instead costs ~57 ms per
 scan, which at a 5 s poll is ~1% of a core around the clock.
 
 Safety:
@@ -72,6 +73,7 @@ LOG_PATH = os.path.expanduser(os.environ.get("REAPER_LOG", "~/Library/Logs/quiet
 DRY_RUN = os.environ.get("REAPER_DRY_RUN", "").lower() not in ("", "0", "false", "no")
 ONESHOT = os.environ.get("REAPER_ONESHOT", "") == "1"
 SUMMARY_EVERY = 3600.0
+FULL_EVERY = 60  # full re-check every 60 scans (5 minutes at the default poll)
 LOG_MAX = 1 << 20
 UID = os.getuid()
 
@@ -151,6 +153,12 @@ class LibprocLister(object):
         self.path = ctypes.create_string_buffer(4096)
         self.cap = 0
         self.buf = None
+        self.names = None
+        self.keys = set()
+        self.settled = {}  # pid -> matched name or None; not looked up again
+        self.tentative = {}  # pid -> (uid, comm) from the last scan
+        self.hits = {}  # settled pids that match
+        self.scans = 0
         if self.size != 64:
             raise OSError("unexpected proc_bsdshortinfo size %d" % self.size)
         if ctypes.sizeof(self.task) != 96:
@@ -164,7 +172,14 @@ class LibprocLister(object):
         return (self.task.total_user + self.task.total_system) * self.tick_seconds
 
     def processes(self, names):
-        """[(pid, name)] of this user's processes whose basename is in names."""
+        """[(pid, name)] of this user's processes whose basename is in names.
+
+        Only processes not seen before are looked up. A pid is "settled" once
+        it looks the same (uid + name) on two consecutive scans; until then it
+        is re-checked, because launchd starts daemons as a root xpcproxy that
+        then exec()s into the daemon under the same pid. Everything is
+        re-checked every FULL_EVERY scans and whenever the names change.
+        """
         n = self.lib.proc_listallpids(None, 0)
         if n <= 0:
             raise OSError("proc_listallpids failed")
@@ -172,33 +187,51 @@ class LibprocLister(object):
             self.cap = n + 256
             self.buf = (ctypes.c_int * self.cap)()
         n = self.lib.proc_listallpids(self.buf, ctypes.sizeof(self.buf))
-        # The kernel keeps the executable's file name (p_comm) cut to 15
-        # bytes. Shorter names match it exactly; names that may have been cut
-        # are confirmed with the full executable path.
-        keys = set(name.encode("utf-8")[:15] for name in names)
-        found = []
-        for i in range(max(0, n)):
-            pid = self.buf[i]
-            if pid <= 0:
-                continue
-            if self.lib.proc_pidinfo(pid, 13, 0, ctypes.byref(self.info), self.size) != self.size:
-                continue
-            if self.info.uid != UID:
-                continue
-            comm = self.info.comm
-            if comm not in keys:
-                continue
-            if len(comm) < 15:
-                name = comm.decode("utf-8", "replace")
-                if name in names:
-                    found.append((pid, name))
-                continue
-            if self.lib.proc_pidpath(pid, self.path, 4096) <= 0:
-                continue
-            name = os.path.basename(self.path.value.decode("utf-8", "replace"))
-            if name in names:
-                found.append((pid, name))
-        return found
+        current = set(self.buf[:max(0, n)])
+        current.discard(0)
+        if names != self.names or self.scans % FULL_EVERY == 0:
+            self.names = names
+            # The kernel keeps the executable's file name (p_comm) cut to 15
+            # bytes. Shorter names match it exactly; names that may have been
+            # cut are confirmed with the full executable path.
+            self.keys = set(name.encode("utf-8")[:15] for name in names)
+            self.settled.clear()
+            self.tentative.clear()
+            self.hits.clear()
+        self.scans += 1
+        for gone in self.settled.keys() - current:
+            del self.settled[gone]
+            self.hits.pop(gone, None)
+        for gone in self.tentative.keys() - current:
+            del self.tentative[gone]
+        found = dict(self.hits)
+        for pid in current - self.settled.keys():
+            ident = None
+            if self.lib.proc_pidinfo(pid, 13, 0, ctypes.byref(self.info), self.size) == self.size:
+                ident = (self.info.uid, self.info.comm)
+            name = self._match(pid, ident, names)
+            if name:
+                found[pid] = name
+            if pid in self.tentative and self.tentative[pid] == ident:
+                del self.tentative[pid]
+                self.settled[pid] = name
+                if name:
+                    self.hits[pid] = name
+            else:
+                self.tentative[pid] = ident
+        return list(found.items())
+
+    def _match(self, pid, ident, names):
+        if ident is None or ident[0] != UID or ident[1] not in self.keys:
+            return None
+        comm = ident[1]
+        if len(comm) < 15:
+            name = comm.decode("utf-8", "replace")
+            return name if name in names else None
+        if self.lib.proc_pidpath(pid, self.path, 4096) <= 0:
+            return None
+        name = os.path.basename(self.path.value.decode("utf-8", "replace"))
+        return name if name in names else None
 
 
 class PsLister(object):
