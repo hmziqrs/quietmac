@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from .. import core, devvol
+from .. import devvol
 from ..core import Step
 from .base import APPLIED, MANUAL, NOT_APPLIED, PARTIAL, Context, Module
 

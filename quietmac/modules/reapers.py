@@ -55,6 +55,10 @@ class ReaperModule(Module):
         disabled = core.gui_disabled()
         new_labels = [l for l in self.labels if not disabled.get(l)]
         st = ctx.state
+        for lg in ctx.facts.get("reaper", {}).get("legacy", []):
+            if lg["loaded"]:
+                core.warn("the hand-made reaper %s is still running next to quietmac's; `quietmac adopt` retires it "
+                          "(it costs ~1%% of a core on its own)" % lg["label"])
 
         def add() -> None:
             st["reaper"]["groups"][self.id] = sorted(names)

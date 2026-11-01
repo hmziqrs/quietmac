@@ -21,6 +21,12 @@ from quietmac.modules import ALL, BY_ID, privacy  # noqa: E402
 from quietmac.modules.continuity import DefaultsModule  # noqa: E402
 
 
+def comm_of(pid):
+    import subprocess as sp
+    return os.path.basename(sp.run(["/bin/ps", "-o", "comm=", "-p", str(pid)], stdout=sp.PIPE,
+                                   universal_newlines=True).stdout.strip())
+
+
 def load_payload():
     spec = importlib.util.spec_from_file_location("payload_reaper", str(ROOT / "payload" / "daemon-reaper.py"))
     mod = importlib.util.module_from_spec(spec)
@@ -56,6 +62,119 @@ class ReaperTests(unittest.TestCase):
         lister = load_payload().make_lister()
         self.assertEqual(lister.method, "libproc")
         self.assertIsNotNone(lister.cpu_seconds(os.getpid()))
+
+
+class AuditFixTests(unittest.TestCase):
+    def test_inside_respects_path_boundaries(self):
+        self.assertTrue(migrate.inside("/Users/me/os", "/Users/me/os"))
+        self.assertTrue(migrate.inside("/Users/me/os/x", "/Users/me/os"))
+        self.assertFalse(migrate.inside("/Users/me/os2", "/Users/me/os"))
+
+    def test_sudoers_written_by_root_and_validated_before_install(self):
+        from quietmac.modules import warp
+        script = warp.sudoers_script(warp.sudoers_text())
+        self.assertNotIn(str(core.STATE_DIR), script)  # no user-writable staging file
+        self.assertIn("mktemp", script)
+        self.assertLess(script.index("visudo -cf"), script.index("install -m 0440"))
+        with self.assertRaises(core.QuietmacError):
+            warp.sudoers_script("x\nQUIETMAC_SUDOERS\ny")
+
+    def test_uid_listing_sees_this_process(self):
+        lister = load_payload().make_lister()
+        comm = comm_of(os.getpid())
+        found = dict(lister.processes(frozenset([comm])))
+        self.assertIn(os.getpid(), found)
+        lister.forget(os.getpid())
+        self.assertNotIn(os.getpid(), lister.hits)
+
+
+class AuditRegressionTests(unittest.TestCase):
+    """Each test fails on the code from before the audit (commit dc32fa4)."""
+
+    def test_killed_process_is_not_returned_again(self):
+        # a killed child stays a zombie until reaped; the old lister kept returning it
+        import signal
+        import time as _t
+        r = load_payload()
+        comm = comm_of(os.getpid())
+        child = os.fork()
+        if child == 0:
+            _t.sleep(30)
+            os._exit(0)
+        try:
+            _t.sleep(0.3)
+            lister = r.make_lister()
+            names = frozenset([comm])
+            lister.processes(names)
+            self.assertIn(child, dict(lister.processes(names)))  # settled match
+            os.kill(child, signal.SIGKILL)
+            _t.sleep(0.3)
+            lister.forget(child)
+            self.assertNotIn(child, dict(lister.processes(names)))
+        finally:
+            os.waitpid(child, 0)
+
+    def test_root_processes_are_not_even_listed(self):
+        lister = load_payload().make_lister()
+        lister.processes(frozenset(["qm-nothing"]))
+        seen = set(lister.tentative) | set(lister.settled)
+        self.assertIn(os.getpid(), seen)
+        self.assertNotIn(1, seen)  # launchd (root): filtered out by the kernel (PROC_UID_ONLY)
+
+    def test_a_failing_scan_does_not_stop_the_reaper(self):
+        import threading
+        import time as _t
+        r = load_payload()
+        log = tempfile.NamedTemporaryFile(delete=False).name
+        r.LOG_PATH, r.POLL = log, 0.05
+        calls = []
+
+        def flaky(*args):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("simulated libproc failure")
+            return args[1], args[2]
+        r.scan_once = flaky
+        r.make_lister = lambda: r.PsLister()
+        from unittest import mock
+        r.signal = mock.Mock(SIGTERM=15, SIGKILL=9)  # signal.signal() only works on the main thread
+        threading.Thread(target=r.main, daemon=True).start()
+        _t.sleep(0.6)
+        self.assertGreater(len(calls), 3)  # kept scanning after the failure
+        self.assertIn("scan failed (OSError: simulated libproc failure); continuing", Path(log).read_text())
+
+    def test_reaper_does_not_load_subprocess_or_traceback(self):
+        import subprocess as sp
+        code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', %r); "
+                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); m.make_lister(); "
+                "print(sorted(x for x in ('subprocess', 'traceback') if x in sys.modules))"
+                % str(ROOT / "payload" / "daemon-reaper.py"))
+        out = sp.run([sys.executable, "-E", "-s", "-S", "-c", code], stdout=sp.PIPE, universal_newlines=True).stdout
+        self.assertEqual(out.strip(), "[]")
+
+    def test_reaper_plist_uses_dash_S(self):
+        self.assertEqual(reaper.plist_data()["ProgramArguments"][:4], ["/usr/bin/python3", "-E", "-s", "-S"])
+
+    def test_battery_render_survives_a_short_unplugged_week(self):
+        from quietmac import battery
+        res = {"battery": {}, "capacity_wh_used": 60.0, "analysis": battery.analyze(BatteryTests.LOG[:300]),
+               "totals": {"awake_h": 0.1, "awake_pct": 1.0}, "awake_percent_per_hour": None,
+               "hours_per_charge_awake": None, "asleep_percent_per_hour": None}
+        battery.render(res)  # the old code formatted None with %.1f here and crashed
+
+    def test_sudo_prompt_escapes_percent(self):
+        src = (ROOT / "quietmac" / "core.py").read_text()
+        self.assertIn('reason.replace("%", "%%")', src)
+
+    def test_rollback_relocates_when_checkout_is_inside(self):
+        # the fix: `migrate rollback` re-runs from a temp copy if the checkout lives in the folder or its copy
+        from unittest import mock
+        st = core.load_state()
+        st["migrations"]["/x/os"] = {"src": "/x/os", "dst": "/x/dev/os", "status": "done"}
+        core.save_state(st)
+        with mock.patch.object(cli, "_relocate_if_inside") as reloc, mock.patch.object(migrate, "rollback"):
+            cli.main(["migrate", "rollback", "/x/os", "--yes"])
+        reloc.assert_called_once_with(["/x/os", "/x/dev/os"])
 
 
 class ModuleTests(unittest.TestCase):

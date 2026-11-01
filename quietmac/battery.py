@@ -153,6 +153,8 @@ def render(res: Dict[str, Any]) -> str:
     b = res["battery"]
     a = res["analysis"]
     w = lambda pct, h: ("%.1f W" % (pct / h * cap / 100)) if h > 0.3 else "-"
+    if not b:
+        return core.bold("Battery") + ": none found (a desktop Mac, or a virtual machine)"
     lines = [core.bold("Battery") + ": %s%% charged, %s cycles, health %s%% (%s of %s mAh) = ~%.0f Wh%s" % (
         b.get("charge_percent"), b.get("cycle_count"), b.get("health_percent"), b.get("full_charge_mah"),
         b.get("design_mah"), cap, (", drawing %.1f W now" % b["draw_watts_now"]) if b.get("draw_watts_now") else ", plugged in")]
@@ -167,7 +169,7 @@ def render(res: Dict[str, Any]) -> str:
             dt.date.fromisoformat(day).strftime("%a %b %d"), ah, ap, "%.1f" % (ap / ah) if ah > .3 else "-", w(ap, ah),
             sh, sp, "%.2f" % (sp / sh) if sh > .3 else "-"))
     t = res["totals"]
-    if t.get("awake_h"):
+    if res["awake_percent_per_hour"]:
         lines.append("  %-26s %8.1f %5.0f%% %7.1f %7s | %13.1f %4.0f%% %7s" % (
             "total", t["awake_h"], t["awake_pct"], res["awake_percent_per_hour"], w(t["awake_pct"], t["awake_h"]),
             t.get("asleep_h", 0), t.get("asleep_pct", 0), "%.2f" % res["asleep_percent_per_hour"] if res["asleep_percent_per_hour"] else "-"))

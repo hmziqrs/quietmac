@@ -193,7 +193,7 @@ def admin(script: str, reason: str) -> str:
         r = run(["/bin/sh", "-c", script])
     elif sys.stdin.isatty():
         try:
-            p = subprocess.run(["/usr/bin/sudo", "-p", "[quietmac] password for %u (" + reason + "): ",
+            p = subprocess.run(["/usr/bin/sudo", "-p", "[quietmac] password for %u (" + reason.replace("%", "%%") + "): ",
                                 "/bin/sh", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                universal_newlines=True)
             r = Result(p.returncode, p.stdout, p.stderr)
@@ -362,6 +362,28 @@ def gui_services() -> Dict[int, str]:
             if len(parts) >= 3 and parts[0].isdigit() and int(parts[0]) > 0:
                 found[int(parts[0])] = parts[-1]
     return found
+
+
+def bootstrap_agent(label: str, plist: Path) -> None:
+    """(Re)load a LaunchAgent. A job that was just booted out can make launchd
+    answer "Input/output error" for a moment, so retry briefly."""
+    import time
+
+    if SANDBOX:
+        return
+    if not plist.exists():
+        raise StepError("%s isn't installed (%s is missing)" % (label, plist))
+    if agent_loaded(label):
+        run(["/bin/launchctl", "bootout", gui(label)])
+    last = None
+    for _ in range(10):
+        r = run(["/bin/launchctl", "bootstrap", "gui/%d" % UID, str(plist)])
+        if r.ok:
+            log_action("loaded %s" % label)
+            return
+        last = r
+        time.sleep(0.5)
+    raise StepError("launchctl bootstrap %s failed: %s" % (label, (last.err or last.out).strip()))
 
 
 def agent_plist(label: str, program: Sequence[str], env: Optional[Dict[str, str]] = None,

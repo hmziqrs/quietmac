@@ -30,7 +30,6 @@ import re
 import shutil
 import stat
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import core, devvol
@@ -38,6 +37,11 @@ from . import core, devvol
 PROTECTED = {"", "Library", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies", "Public",
              "Applications", ".Trash", ".local", ".config", ".ssh", ".claude"}
 IGNORE_DIFF = {".DS_Store"}
+
+
+def inside(path: str, root: str) -> bool:
+    """True if path is root or anywhere below it (not just sharing a prefix)."""
+    return path == root or path.startswith(root.rstrip("/") + "/")
 
 
 def _home_rel(p: str) -> Optional[str]:
@@ -61,8 +65,7 @@ def busy(path: str) -> List[Tuple[int, str, str]]:
             cmd = line[1:]
         elif line.startswith("n") and pid is not None:
             cwd = line[1:]
-            if pid != os.getpid() and (cwd == real or cwd.startswith(real + "/") or cwd == path
-                                       or cwd.startswith(path + "/")):
+            if pid != os.getpid() and (inside(cwd, real) or inside(cwd, path)):
                 found.append((pid, cmd, cwd))
     return found
 
@@ -201,12 +204,12 @@ def preflight(st: Dict[str, Any], folder: str) -> Dict[str, Any]:
         info["problems"].append("%s isn't a folder" % src)
     if not devvol.is_mounted_at(mount, dv["uuid"]):
         info["problems"].append("the dev volume isn't mounted at %s (quietmac devvol mount)" % mount)
-    if mount == src or mount.startswith(src + "/"):
+    if inside(mount, src):
         info["problems"].append("the dev volume is mounted inside %s" % src)
     if os.path.exists(dst) and not (rec and rec.get("status") == "switched"):
         info["problems"].append("%s already exists on the dev volume" % dst)
     cwd = os.getcwd()
-    if cwd == src or cwd.startswith(src + "/"):
+    if inside(cwd, src):
         info["problems"].append("you're inside %s; `cd ~` and run quietmac from there" % src)
     if info["problems"]:
         return info
@@ -277,7 +280,14 @@ def run_one(st: Dict[str, Any], folder: str, verify: str = "quick", ignore_busy:
     # switch: two renames on two volumes, then a symlink
     os.rename(partial, dst)
     backup = "%s.quietmac-backup-%s" % (src, _stamp())
-    os.rename(src, backup)
+    try:
+        os.rename(src, backup)
+    except OSError as e:
+        os.rename(dst, partial)  # put things back as they were: original in place, copy unswitched
+        rec["status"] = "failed"
+        core.save_state(st)
+        raise core.QuietmacError("couldn't move the original aside (%s); nothing was switched. The verified copy is "
+                                 "at %s." % (e, partial))
     rec.update(status="switched", backup=backup)
     core.save_state(st)
     core.log_action("migrate %s: original renamed to %s" % (src, backup))
@@ -318,7 +328,7 @@ def rollback(st: Dict[str, Any], folder: str, keep_changes: bool = False) -> Non
     if status not in ("switched", "done"):
         raise core.QuietmacError("migration of %s is in state %r; nothing to roll back" % (src, status))
     cwd = os.getcwd()
-    if cwd.startswith(dst) or cwd.startswith(src):
+    if inside(cwd, dst) or inside(cwd, src):
         raise core.QuietmacError("`cd ~` first")
     b = busy(dst)
     if b:
