@@ -1,0 +1,21 @@
+# quietmac
+
+> Lower idle CPU and longer battery life on macOS without disabling SIP. A Python 3.9 CLI (standard library only) whose every change is a reversible module: a reaper for SIP-protected Apple daemons, Continuity and Bluetooth switches, Cloudflare WARP on demand, a configuration profile for Apple Intelligence and Siri, battery power settings, and a dev volume with fseventsd logging and Spotlight off.
+
+Agents installing quietmac on someone's Mac should follow INSTALL.md: run `quietmac detect --json`, ask the questions from `quietmac questions --json`, show `quietmac plan`, then apply and verify. Never disable SIP, never reap root processes, and get the user's agreement before every change. Agents changing the code should read AGENTS.md.
+
+## Docs
+
+- [INSTALL.md](https://raw.githubusercontent.com/hmziqrs/quietmac/master/INSTALL.md): the install script for agents, including the question bank and the order to apply modules in
+- [README](https://raw.githubusercontent.com/hmziqrs/quietmac/master/README.md): what it does, measured results, and how it compares with the alternatives
+- [Modules](https://raw.githubusercontent.com/hmziqrs/quietmac/master/docs/MODULES.md): every module, what it changes, what you lose, and how revert undoes it
+- [Dev volume](https://raw.githubusercontent.com/hmziqrs/quietmac/master/docs/DEV-VOLUME.md): the volume for code and caches, safe folder migration, cache moves, manual recovery
+- [Reference](https://raw.githubusercontent.com/hmziqrs/quietmac/master/docs/REFERENCE.md): the full command list, repository layout, and how to run the tests
+- [AGENTS.md](https://raw.githubusercontent.com/hmziqrs/quietmac/master/AGENTS.md): rules for agents working on this codebase
+
+## Optional
+
+- [Background](https://raw.githubusercontent.com/hmziqrs/quietmac/master/docs/BACKGROUND.md): what was measured, and the approaches that were tried and rejected
+- [Measurements](https://raw.githubusercontent.com/hmziqrs/quietmac/master/docs/measurements/README.md): the raw CSV data behind every number
+- [Security](https://raw.githubusercontent.com/hmziqrs/quietmac/master/SECURITY.md): what runs as root and how to report a vulnerability
+- [Full text](https://raw.githubusercontent.com/hmziqrs/quietmac/master/llms-full.txt): all of the documents above in one file

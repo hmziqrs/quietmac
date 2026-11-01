@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (Python 3.9, shellcheck, docs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Compile with Python 3.9, the version macOS's command line tools ship
+        run: python -m compileall -q quietmac payload/daemon-reaper.py tests scripts
+      - name: pyflakes
+        run: |
+          python -m pip install --quiet pyflakes==3.2.0
+          python -m pyflakes quietmac payload/daemon-reaper.py tests scripts
+      - name: shellcheck
+        run: shellcheck bin/quietmac payload/warp
+      - name: llms-full.txt is up to date
+        run: python scripts/build_llms.py --check
+      - name: No em or en dashes in the docs
+        run: |
+          if grep -rn '[—–]' README.md INSTALL.md AGENTS.md CONTRIBUTING.md SECURITY.md CHANGELOG.md llms.txt docs; then
+            echo "::error::Docs use plain punctuation: replace em and en dashes"
+            exit 1
+          fi
+
+  macos:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System Python
+        run: /usr/bin/python3 --version
+      - name: Unit tests
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Read-only commands
+        run: |
+          ./bin/quietmac --version
+          ./bin/quietmac detect
+          ./bin/quietmac detect --json > /dev/null
+          ./bin/quietmac list
+          ./bin/quietmac questions --json > /dev/null
+          ./bin/quietmac battery
+          ./bin/quietmac plan reap-media-analysis handoff-off dev-volume privacy-profile
+      - name: The WARP watcher compiles
+        run: xcrun swiftc -O -swift-version 5 -o "$RUNNER_TEMP/warp-ondemand" payload/warp-ondemand.swift
+      - name: The sudoers rule validates
+        run: |
+          sed "s/@USER@/$USER/g" payload/sudoers-warp.template > "$RUNNER_TEMP/sudoers"
+          /usr/sbin/visudo -cf "$RUNNER_TEMP/sudoers"
+      - name: Integration checks (disk image, launchd, osascript)
+        run: /usr/bin/python3 tests/integration.py
