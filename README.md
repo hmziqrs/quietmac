@@ -42,8 +42,9 @@ What it does differently:
   changes, and logs every change to `~/Library/Logs/quietmac/actions.log`.
 - **Measured, not folklore.** Each module says what it saved. Things that
   backfired in testing are blocked.
-- **Cheap to run.** The reaper reads processes through libproc: ~1 ms of CPU
-  per scan, against ~45 ms for spawning `ps`. The WARP watcher reacts to
+- **Cheap to run.** The reaper reads processes through libproc and looks up
+  only new ones: ~1 ms of CPU per 5 s scan (0.02% of a core), against ~57 ms
+  for spawning `ps`. The WARP watcher reacts to
   events and uses 0% CPU.
 
 ## Limits

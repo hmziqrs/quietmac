@@ -21,8 +21,9 @@ memory pressure.
 
 The reaper itself:
 
-- reads processes through libproc. That's ~1 ms of CPU per scan; spawning
-  `ps` costs ~45 ms per scan, about 1% of a core at the 5 s poll.
+- reads processes through libproc and looks up only processes it hasn't
+  seen before: ~1 ms of CPU per 5 s scan (0.02% of a core). Spawning `ps`
+  instead costs ~57 ms per scan (1.1% of a core).
 - touches only your own processes, never root ones.
 - has a hard-coded never-kill list (chronod, the Siri AI app,
   siriinferenced, fseventsd, Control Center extensions, WindowServer, ...).
