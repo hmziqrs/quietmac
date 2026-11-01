@@ -252,6 +252,9 @@ def destroy_steps(st: Dict[str, Any], force: bool = False) -> List[Step]:
         if left and not force:
             raise core.QuietmacError("the dev volume still has files (%s). Move them off, or pass --force to delete "
                                      "them with the volume." % ", ".join(left[:8]))
+    elif diskutil_info(uuid) and not force:
+        raise core.QuietmacError("the dev volume isn't mounted, so I can't check it's empty. Mount it first "
+                                 "(quietmac devvol mount), or pass --force to delete it unchecked.")
     script = """set -eu
 MP=%(mp)s UUID=%(uuid)s FSTAB=%(fstab)s
 if /sbin/mount | /usr/bin/grep -q " on $MP "; then /usr/sbin/diskutil unmount "$MP" >/dev/null; fi

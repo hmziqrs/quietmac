@@ -13,7 +13,6 @@ import re
 import shutil
 import signal
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import core
@@ -76,7 +75,7 @@ def write_conf(st: Dict[str, Any]) -> None:
 
 def plist_data() -> Dict[str, Any]:
     return core.agent_plist(
-        LABEL, [PYTHON, "-E", "-s", str(SCRIPT)],
+        LABEL, [PYTHON, "-E", "-s", "-S", str(SCRIPT)],  # -S: no site module, smaller and faster
         env={"REAPER_CONF": str(CONF), "REAPER_LOG": str(LOG), "REAPER_POLL": "5"},
         log_name="reaper")
 
@@ -105,20 +104,12 @@ def ensure_agent_steps() -> List[Step]:
     if loaded and agent_current():
         return steps
     steps.append(Step("install reaper script and LaunchAgent (%s)" % LABEL, fn=_install_files))
-    if loaded:
-        steps.append(Step("reload the reaper", argv=["/bin/launchctl", "bootout", core.gui(LABEL)], allow_fail=True))
-    steps.append(Step("start the reaper", fn=_bootstrap))
+    steps.append(Step("%s the reaper" % ("restart" if loaded else "start"), fn=_bootstrap))
     return steps
 
 
 def _bootstrap() -> None:
-    r = core.launchctl("bootstrap", "gui/%d" % core.UID, str(PLIST))
-    if not r.ok and "already" not in (r.err + r.out).lower():
-        # launchd can need a moment after a bootout
-        time.sleep(1)
-        r = core.launchctl("bootstrap", "gui/%d" % core.UID, str(PLIST))
-        if not r.ok:
-            raise core.StepError("launchctl bootstrap %s failed: %s" % (LABEL, (r.err or r.out).strip()))
+    core.bootstrap_agent(LABEL, PLIST)
 
 
 def remove_agent_steps() -> List[Step]:

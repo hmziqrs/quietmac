@@ -24,7 +24,6 @@ exit.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -79,6 +78,20 @@ def sudoers_text() -> str:
     return (core.PAYLOAD_DIR / "sudoers-warp.template").read_text().replace("@USER@", core.USER)
 
 
+def sudoers_script(text: str) -> str:
+    """Root script that writes the rule itself (the content travels inside the
+    script, never through a file you can write), validates it, then installs it."""
+    if "QUIETMAC_SUDOERS" in text:
+        raise core.QuietmacError("unexpected sudoers content")
+    return ("T=$(/usr/bin/mktemp /tmp/quietmac-warp.XXXXXX)\n"
+            "/bin/cat > \"$T\" <<'QUIETMAC_SUDOERS'\n%sQUIETMAC_SUDOERS\n"
+            "if ! /usr/sbin/visudo -cf \"$T\" >/dev/null; then /bin/rm -f \"$T\"; echo 'sudoers rule failed validation' >&2; exit 1; fi\n"
+            "/usr/bin/install -m 0440 -o root -g wheel \"$T\" %s\n"
+            "/bin/rm -f \"$T\"\n"
+            "/usr/sbin/visudo -c >/dev/null || { /bin/rm -f %s; echo 'sudoers check failed' >&2; exit 1; }"
+            % (text if text.endswith("\n") else text + "\n", SUDOERS, SUDOERS))
+
+
 def plist_data() -> Dict[str, Any]:
     return core.agent_plist(LABEL, [str(BINARY)], env={"WARP_ONDEMAND_LOG": str(LOG)}, log_name="warp-ondemand",
                             extra={"LimitLoadToSessionType": "Aqua"})
@@ -129,8 +142,6 @@ class WarpModule(Module):
             raise core.QuietmacError("found an earlier hand-made WARP setup (%s). Re-run with --opt replace_legacy=1 to "
                                      "replace it (the old files are backed up), or `quietmac adopt`." % ", ".join(what))
         text = sudoers_text()
-        tmp = core.STATE_DIR / "quietmac-warp.sudoers"
-
         def build() -> None:
             for d in (SRC.parent, BINARY.parent):
                 d.mkdir(parents=True, exist_ok=True)
@@ -140,8 +151,12 @@ class WarpModule(Module):
                 raise core.StepError("swiftc failed:\n" + (r.err or r.out))
             shutil.copy2(str(core.PAYLOAD_DIR / "warp"), str(WARP_SCRIPT))
             os.chmod(str(WARP_SCRIPT), 0o755)
-            core.atomic_write(tmp, text, 0o600)
-            v = core.run(["/usr/sbin/visudo", "-cf", str(tmp)])
+            # Pre-check the syntax as the user. The file root installs is written by root itself
+            # (see sudoers_script), so nothing running as you can swap it in between.
+            check = core.STATE_DIR / "quietmac-warp.sudoers.check"
+            core.atomic_write(check, text, 0o600)
+            v = core.run(["/usr/sbin/visudo", "-cf", str(check)])
+            check.unlink()
             if not v.ok:
                 raise core.StepError("the generated sudoers rule doesn't parse: " + (v.err or v.out))
 
@@ -150,9 +165,7 @@ class WarpModule(Module):
             steps.append(Step("stop the hand-made watcher %s" % lg["label"],
                               argv=["/bin/launchctl", "bootout", core.gui(lg["label"])], allow_fail=True))
             steps.append(Step("back up %s" % lg["plist"], fn=_backup(Path(lg["plist"]))))
-        script = ("/usr/bin/install -m 0440 -o root -g wheel %s %s\n"
-                  "/usr/sbin/visudo -c >/dev/null || { /bin/rm -f %s; echo 'sudoers check failed' >&2; exit 1; }"
-                  % (core.sh_quote(str(tmp)), SUDOERS, SUDOERS))
+        script = sudoers_script(text)
         for p in old_sudoers:
             script += "\n/bin/mv %s %s.quietmac-backup\n/bin/chmod 0400 %s.quietmac-backup" % (
                 core.sh_quote(str(p)), core.sh_quote(str(core.STATE_DIR / p.name)), core.sh_quote(str(core.STATE_DIR / p.name)))
@@ -171,7 +184,7 @@ class WarpModule(Module):
 
         steps.append(Step("link %s -> %s and write the LaunchAgent" % (WARP_LINK, WARP_SCRIPT), fn=link))
         steps.append(Step("start the watcher (it brings the daemon in line with whether the app is open)",
-                          argv=["/bin/launchctl", "bootstrap", "gui/%d" % core.UID, str(PLIST)]))
+                          fn=lambda: core.bootstrap_agent(LABEL, PLIST)))
         steps.append(self.record_step(ctx, legacy=[l["label"] for l in legacy], old_sudoers=[str(p) for p in old_sudoers]))
         return steps
 

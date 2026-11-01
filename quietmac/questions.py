@@ -14,7 +14,7 @@ module ids to apply and `opts` any --opt values.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from .modules import privacy
 

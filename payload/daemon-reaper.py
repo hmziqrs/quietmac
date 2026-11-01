@@ -35,12 +35,11 @@ REAPER_DRY_RUN (1 = log only), REAPER_ONESHOT (1 = one scan, then exit).
 """
 
 import ctypes
+import gc
 import os
 import signal
-import subprocess
 import sys
 import time
-import traceback
 
 # Killing any of these breaks the session or starts a relaunch loop. Measured on
 # macOS 27: chronod is relaunched every ~5 s; the "Siri AI" app (launchd label
@@ -138,21 +137,26 @@ class LibprocLister(object):
 
     def __init__(self):
         self.lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-        self.lib.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        self.lib.proc_listallpids.restype = ctypes.c_int
+        # proc_listpids(PROC_UID_ONLY, uid, ...) filters in the kernel: only this
+        # user's processes come back (and a root xpcproxy only shows up once it
+        # has become the user's daemon). Returns bytes, not a count.
+        self.lib.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+        self.lib.proc_listpids.restype = ctypes.c_int
         self.lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
         self.lib.proc_pidinfo.restype = ctypes.c_int
         self.lib.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
         self.lib.proc_pidpath.restype = ctypes.c_int
         self.info = _ShortBSDInfo()
         self.size = ctypes.sizeof(self.info)
+        self.info_ref = ctypes.byref(self.info)
         self.task = _TaskInfo()
+        self.task_ref = ctypes.byref(self.task)
         tb = _Timebase()
         ctypes.CDLL("/usr/lib/libSystem.B.dylib").mach_timebase_info(ctypes.byref(tb))
         self.tick_seconds = float(tb.numer) / float(tb.denom) / 1e9 if tb.denom else 1e-9
         self.path = ctypes.create_string_buffer(4096)
-        self.cap = 0
-        self.buf = None
+        self.cap = 1024
+        self.buf = (ctypes.c_int * self.cap)()
         self.names = None
         self.keys = set()
         self.settled = {}  # pid -> matched name or None; not looked up again
@@ -167,7 +171,7 @@ class LibprocLister(object):
 
     def cpu_seconds(self, pid):
         """Total CPU time of pid, or None if it's gone."""
-        if self.lib.proc_pidinfo(pid, 4, 0, ctypes.byref(self.task), 96) != 96:
+        if self.lib.proc_pidinfo(pid, 4, 0, self.task_ref, 96) != 96:
             return None
         return (self.task.total_user + self.task.total_system) * self.tick_seconds
 
@@ -180,14 +184,16 @@ class LibprocLister(object):
         then exec()s into the daemon under the same pid. Everything is
         re-checked every FULL_EVERY scans and whenever the names change.
         """
-        n = self.lib.proc_listallpids(None, 0)
-        if n <= 0:
-            raise OSError("proc_listallpids failed")
-        if n + 64 > self.cap:
-            self.cap = n + 256
+        while True:
+            used = self.lib.proc_listpids(4, UID, self.buf, ctypes.sizeof(self.buf))  # 4 = PROC_UID_ONLY
+            if used <= 0:
+                raise OSError("proc_listpids failed")
+            n = used // ctypes.sizeof(ctypes.c_int)
+            if n < self.cap:  # a full buffer may have been cut short: grow and ask again
+                break
+            self.cap *= 2
             self.buf = (ctypes.c_int * self.cap)()
-        n = self.lib.proc_listallpids(self.buf, ctypes.sizeof(self.buf))
-        current = set(self.buf[:max(0, n)])
+        current = set(self.buf[:n])
         current.discard(0)
         if names != self.names or self.scans % FULL_EVERY == 0:
             self.names = names
@@ -207,7 +213,7 @@ class LibprocLister(object):
         found = dict(self.hits)
         for pid in current - self.settled.keys():
             ident = None
-            if self.lib.proc_pidinfo(pid, 13, 0, ctypes.byref(self.info), self.size) == self.size:
+            if self.lib.proc_pidinfo(pid, 13, 0, self.info_ref, self.size) == self.size:
                 ident = (self.info.uid, self.info.comm)
             name = self._match(pid, ident, names)
             if name:
@@ -220,6 +226,12 @@ class LibprocLister(object):
             else:
                 self.tentative[pid] = ident
         return list(found.items())
+
+    def forget(self, pid):
+        """Drop a pid we just killed, so a lingering zombie isn't killed (and counted) twice."""
+        self.settled.pop(pid, None)
+        self.tentative.pop(pid, None)
+        self.hits.pop(pid, None)
 
     def _match(self, pid, ident, names):
         if ident is None or ident[0] != UID or ident[1] not in self.keys:
@@ -237,7 +249,12 @@ class LibprocLister(object):
 class PsLister(object):
     method = "ps"
 
+    def forget(self, pid):
+        pass
+
     def cpu_seconds(self, pid):
+        import subprocess
+
         try:
             out = subprocess.run(["/bin/ps", "-o", "time=", "-p", str(pid)], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, universal_newlines=True).stdout.strip()
@@ -251,6 +268,8 @@ class PsLister(object):
         return total
 
     def processes(self, names):
+        import subprocess
+
         try:
             res = subprocess.run(["/bin/ps", "-axo", "pid=,uid=,comm="], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, universal_newlines=True).stdout
@@ -293,88 +312,102 @@ def main():
     recent = {}  # name -> kill times within CHURN_WINDOW
     watch = set()  # names in watch mode (killed only when busy)
     given_up = set()
-    samples = {}  # pid -> (cpu seconds, wall time, busy since or None)
-    last_summary = time.time()
+    samples = {}  # pid -> (cpu seconds, monotonic time, busy since or None)
+    last_summary = time.monotonic()
+    last_error = None
+    gc.freeze()  # startup objects never need collecting; keeps each scan's GC work small
     while True:
         try:
-            m = os.stat(CONF).st_mtime
-        except OSError:
-            m = None
-        if m != conf_mtime:
-            conf_mtime = m
-            new = read_names(CONF)
-            if new != names:
-                names = new
-                given_up &= names
-                watch &= names
-                log("config reloaded: names=%s" % (",".join(sorted(names)) or "(none)"))
-        active = names - given_up
-        alive = set()
-        for pid, name in (lister.processes(active) if active else []):
-            now = time.time()
-            if name in watch:
-                alive.add(pid)
-                cpu = lister.cpu_seconds(pid)
-                prev = samples.get(pid)
-                if cpu is None:
-                    continue
-                busy_since = None
-                usage = 0.0
-                if prev is not None and now > prev[1]:
-                    usage = (cpu - prev[0]) / (now - prev[1])
-                    if usage >= WATCH_CPU:
-                        busy_since = prev[2] if prev[2] is not None else prev[1]
-                samples[pid] = (cpu, now, busy_since)
-                if busy_since is None or now - busy_since < WATCH_GRACE:
-                    continue
-                reason = "busy: %.0f%% of a core for %.0fs" % (usage * 100, now - busy_since)
-            else:
-                reason = ""
-            if DRY_RUN:
-                log("DRY-RUN would kill pid=%d %s %s" % (pid, name, reason))
-                continue
-            times = [t for t in recent.get(name, ()) if now - t < CHURN_WINDOW]
-            if len(times) >= CHURN_MAX:
-                recent[name] = []
-                if name in watch:
-                    watch.discard(name)
-                    given_up.add(name)
-                    log("GAVE UP on %s until next login: it keeps relaunching even when killed only while busy "
-                        "(remove it: quietmac reaper remove %s)" % (name, name))
-                    continue
-                watch.add(name)
-                log("CHURN on %s: killed %d times in %.0fm, something keeps relaunching it. Watch mode: it may "
-                    "run while idle and is killed after %.0fs above %.0f%% of a core" % (
-                        name, len(times), CHURN_WINDOW / 60, WATCH_GRACE, WATCH_CPU * 100))
-                alive.add(pid)
-                cpu = lister.cpu_seconds(pid)
-                if cpu is not None:
-                    samples[pid] = (cpu, now, None)
-                continue
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                continue
-            samples.pop(pid, None)
-            times.append(now)
-            recent[name] = times
-            if name not in seen or reason:
-                seen.add(name)
-                log("KILLED pid=%d %s%s" % (pid, name, (" (%s)" % reason) if reason else " (repeats summarized hourly)"))
-            else:
-                counts[name] = counts.get(name, 0) + 1
-        for pid in list(samples):
-            if pid not in alive:
-                samples.pop(pid, None)
-        now = time.time()
-        if counts and now - last_summary >= SUMMARY_EVERY:
-            log("relaunch kills in last %.0fm: %s" % (
-                (now - last_summary) / 60, ", ".join("%s=%d" % kv for kv in sorted(counts.items()))))
-            counts.clear()
-            last_summary = now
+            names, conf_mtime = scan_once(lister, names, conf_mtime, seen, counts, recent, watch, given_up, samples)
+            now = time.monotonic()
+            if counts and now - last_summary >= SUMMARY_EVERY:
+                log("relaunch kills in last %.0fm: %s" % (
+                    (now - last_summary) / 60, ", ".join("%s=%d" % kv for kv in sorted(counts.items()))))
+                counts.clear()
+                last_summary = now
+        except Exception as e:  # never let one bad scan reset the churn state via a crash/restart
+            if last_error is None or time.monotonic() - last_error > 3600:
+                log("scan failed (%s: %s); continuing" % (type(e).__name__, e))
+                last_error = time.monotonic()
         if ONESHOT:
             return
         time.sleep(POLL)
+
+
+def scan_once(lister, names, conf_mtime, seen, counts, recent, watch, given_up, samples):
+    """One pass: reload the kill list if it changed, then kill (or watch) every match."""
+    try:
+        m = os.stat(CONF).st_mtime
+    except OSError:
+        m = None
+    if m != conf_mtime:
+        conf_mtime = m
+        new = read_names(CONF)
+        if new != names:
+            names = new
+            given_up &= names
+            watch &= names
+            log("config reloaded: names=%s" % (",".join(sorted(names)) or "(none)"))
+    active = names - given_up
+    alive = set()
+    for pid, name in (lister.processes(active) if active else []):
+        now = time.monotonic()
+        if name in watch:
+            alive.add(pid)
+            cpu = lister.cpu_seconds(pid)
+            prev = samples.get(pid)
+            if cpu is None:
+                continue
+            busy_since = None
+            usage = 0.0
+            if prev is not None and now > prev[1]:
+                usage = (cpu - prev[0]) / (now - prev[1])
+                if usage >= WATCH_CPU:
+                    busy_since = prev[2] if prev[2] is not None else prev[1]
+            samples[pid] = (cpu, now, busy_since)
+            if busy_since is None or now - busy_since < WATCH_GRACE:
+                continue
+            reason = "busy: %.0f%% of a core for %.0fs" % (usage * 100, now - busy_since)
+        else:
+            reason = ""
+        if DRY_RUN:
+            log("DRY-RUN would kill pid=%d %s %s" % (pid, name, reason))
+            continue
+        times = [t for t in recent.get(name, ()) if now - t < CHURN_WINDOW]
+        if len(times) >= CHURN_MAX:
+            recent[name] = []
+            if name in watch:
+                watch.discard(name)
+                given_up.add(name)
+                log("GAVE UP on %s until next login: it keeps relaunching even when killed only while busy "
+                    "(remove it: quietmac reaper remove %s)" % (name, name))
+                continue
+            watch.add(name)
+            log("CHURN on %s: killed %d times in %.0fm, something keeps relaunching it. Watch mode: it may "
+                "run while idle and is killed after %.0fs above %.0f%% of a core" % (
+                    name, len(times), CHURN_WINDOW / 60, WATCH_GRACE, WATCH_CPU * 100))
+            alive.add(pid)
+            cpu = lister.cpu_seconds(pid)
+            if cpu is not None:
+                samples[pid] = (cpu, now, None)
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            continue
+        samples.pop(pid, None)
+        lister.forget(pid)
+        times.append(now)
+        recent[name] = times
+        if name not in seen or reason:
+            seen.add(name)
+            log("KILLED pid=%d %s%s" % (pid, name, (" (%s)" % reason) if reason else " (repeats summarized hourly)"))
+        else:
+            counts[name] = counts.get(name, 0) + 1
+    for pid in list(samples):
+        if pid not in alive:
+            samples.pop(pid, None)
+    return names, conf_mtime
 
 
 if __name__ == "__main__":
@@ -383,5 +416,7 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         pass
     except Exception:
+        import traceback
+
         log("reaper crashed:\n" + traceback.format_exc())
         sys.exit(1)

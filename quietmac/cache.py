@@ -20,7 +20,7 @@ real folder.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from . import core, devvol, migrate
 

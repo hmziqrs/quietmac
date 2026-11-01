@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from . import battery, cache, core, detect, devvol, measure, migrate, questions, reaper
 from .modules import ALL, BY_ID, get
-from .modules.base import APPLIED, MANUAL, NOT_APPLIED, PARTIAL, Context
+from .modules.base import APPLIED, MANUAL, PARTIAL, Context
 
 BOOT = "import sys; sys.path.insert(0, sys.argv.pop(1)); from quietmac.cli import main; sys.exit(main())"
 
@@ -80,11 +80,10 @@ def cmd_list(a: argparse.Namespace) -> int:
 
 
 def _list_row(r: Dict[str, Any]) -> None:
-    if True:
-        flag = "" if r["applicable"] else core.dim("  (n/a: %s)" % r["why_not"])
-        core.say("  %-26s %-12s %s%s" % (r["id"], _status_word(r["status"]), r["title"], flag))
-        if r["detail"]:
-            core.say("  %-26s %-12s %s" % ("", "", core.dim(r["detail"])))
+    flag = "" if r["applicable"] else core.dim("  (n/a: %s)" % r["why_not"])
+    core.say("  %-26s %-12s %s%s" % (r["id"], _status_word(r["status"]), r["title"], flag))
+    if r["detail"]:
+        core.say("  %-26s %-12s %s" % ("", "", core.dim(r["detail"])))
 
 
 def cmd_plan(a: argparse.Namespace) -> int:
@@ -97,18 +96,25 @@ def _run_modules(a: argparse.Namespace, revert: bool, plan_only: bool = False) -
     st = core.load_state()
     opts = parse_opts(a.opt)
     done = []
-    for mid in a.modules:
-        m = get(mid)
+    failed = []
+    for m in [get(mid) for mid in a.modules]:  # unknown ids fail before anything runs
+        mid = m.id
         ctx = Context(f, st, opts_for(opts, mid), dry_run=a.dry_run, yes=a.yes)
         if not revert:
             ok, why = m.applicable(f)
             if not ok:
                 core.warn("%s: not applicable here (%s)" % (mid, why))
+                failed.append(mid)
                 continue
-        elif mid not in st["modules"] and m.status(f, st)[0] != APPLIED:
+        elif mid not in st["modules"] and m.status(f, st)[0] not in (APPLIED, PARTIAL):
             core.warn("%s isn't applied; nothing to revert" % mid)
             continue
-        steps = m.revert_steps(ctx) if revert else m.apply_steps(ctx)
+        try:
+            steps = m.revert_steps(ctx) if revert else m.apply_steps(ctx)
+        except core.QuietmacError as e:
+            print(core.red("quietmac: ") + "%s: %s" % (mid, e), file=sys.stderr)
+            failed.append(mid)
+            continue
         core.say("")
         core.say(m.describe())
         core.say("  %s:" % ("revert would" if revert and a.dry_run else "revert" if revert else
@@ -121,7 +127,13 @@ def _run_modules(a: argparse.Namespace, revert: bool, plan_only: bool = False) -
             core.say("skipped " + mid)
             continue
         core.say(core.bold("%s %s" % ("reverting" if revert else "applying", mid)))
-        core.run_steps(steps, m.title)
+        try:
+            core.run_steps(steps, m.title)
+        except core.QuietmacError as e:
+            print(core.red("quietmac: ") + "%s stopped partway: %s\n  `quietmac status` shows what took effect; "
+                  "`quietmac revert %s` undoes it." % (mid, e, mid), file=sys.stderr)
+            failed.append(mid)
+            continue
         done.append(m)
     if done:
         f2 = detect.detect()
@@ -131,6 +143,9 @@ def _run_modules(a: argparse.Namespace, revert: bool, plan_only: bool = False) -
             core.say("%-26s %s %s" % (m.id, _status_word(s), core.dim(detail)))
     elif plan_only or a.dry_run:
         core.say(core.dim("\n(dry run: nothing was changed)"))
+    if failed:
+        core.warn("not done: " + ", ".join(failed))
+        return 1
     return 0
 
 
@@ -267,6 +282,8 @@ def cmd_setup(a: argparse.Namespace) -> int:
     for q in questions.evaluate(f):
         if not q["ask"]:
             continue
+        if q["id"] in ("migrate", "caches") and "dev-volume" not in mods and not f["devvol"].get("exists"):
+            continue  # no dev volume, nothing to move onto
         core.say("")
         if q["multi"]:
             core.say(core.bold(q["question"]))
@@ -371,7 +388,12 @@ def cmd_reaper(a: argparse.Namespace) -> int:
         core.run_steps([core.Step("stop the reaper until `quietmac reaper resume` or next login",
                                   argv=["/bin/launchctl", "bootout", core.gui(reaper.LABEL)], allow_fail=True)], "pause")
         return 0
+    if a.action in ("pause", "resume") and not reaper.PLIST.exists():
+        raise core.QuietmacError("quietmac's reaper isn't installed; apply a reap-* module (or `quietmac adopt`) first")
     if a.action == "resume":
+        if core.agent_loaded(reaper.LABEL):
+            core.say("the reaper is already running")
+            return 0
         core.run_steps([core.Step("start the reaper", fn=reaper._bootstrap)], "resume")
         return 0
     return 2
@@ -462,6 +484,7 @@ def cmd_migrate(a: argparse.Namespace) -> int:
     if a.action == "status":
         if a.json:
             _print_json(st["migrations"])
+            return 0
         for src, m in st["migrations"].items():
             core.say("%s -> %s: %s%s" % (src, m.get("dst"), m.get("status"),
                                          ("; backup %s" % m["backup"]) if m.get("backup") else ""))
@@ -480,6 +503,11 @@ def cmd_migrate(a: argparse.Namespace) -> int:
     if a.action == "run":
         _relocate_if_inside(a.folders)
         for p in a.folders:
+            src = os.path.abspath(os.path.expanduser(p)).rstrip("/")
+            if st["migrations"].get(src, {}).get("status") == "switched":
+                core.say("finishing the interrupted migration of %s" % src)
+                migrate.run_one(st, p, aliases=not a.no_claude_aliases)
+                continue
             info = migrate.preflight(st, p)
             if not a.yes:
                 core.say(migrate.plan_text(info))
@@ -488,6 +516,8 @@ def cmd_migrate(a: argparse.Namespace) -> int:
             migrate.run_one(st, p, verify=a.verify, ignore_busy=a.ignore_busy, aliases=not a.no_claude_aliases)
         return 0
     if a.action == "rollback":
+        dsts = [st["migrations"].get(os.path.abspath(os.path.expanduser(p)).rstrip("/"), {}).get("dst") for p in a.folders]
+        _relocate_if_inside(a.folders + [d for d in dsts if d])
         for p in a.folders:
             if core.confirm("Roll back %s?" % p, default=True, assume_yes=a.yes):
                 migrate.rollback(st, p, keep_changes=a.keep_changes)
@@ -591,6 +621,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="quietmac", description=(
         "Lower idle CPU and longer battery life on macOS, without disabling SIP. Every change is a module you can "
         "plan, apply and revert. Start with: quietmac detect, quietmac list, quietmac setup."))
+    from . import __version__
+
+    p.add_argument("--version", action="version", version="quietmac " + __version__)
     sub = p.add_subparsers(dest="cmd")
 
     def add(name: str, fn: Any, help: str) -> argparse.ArgumentParser:

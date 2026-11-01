@@ -9,7 +9,6 @@ import json
 import os
 import platform
 import re
-import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -314,6 +313,11 @@ def _fseventsd() -> Dict[str, Any]:
     return {"cpu_seconds": round(cpu, 1), "uptime_seconds": int(up), "percent_of_core": round(100.0 * cpu / up, 2)}
 
 
+def _timemachine() -> bool:
+    r = core.run(["/usr/bin/tmutil", "destinationinfo"])
+    return r.ok and "No destinations" not in r.out
+
+
 def detect(sizes: bool = False) -> Dict[str, Any]:
     from . import devvol
 
@@ -337,8 +341,7 @@ def detect(sizes: bool = False) -> Dict[str, Any]:
         "dev": _dev(sizes),
         "devvol": devvol.status(st),
         "fseventsd": _fseventsd(),
-        "timemachine": "No destinations" not in core.run(["/usr/bin/tmutil", "destinationinfo"]).out
-        and core.run(["/usr/bin/tmutil", "destinationinfo"]).ok,
+        "timemachine": _timemachine(),
         "quietmac": {"applied": sorted(st["modules"].keys()), "state_file": str(core.STATE_FILE)},
     }
 
