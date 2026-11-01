@@ -1,0 +1,28 @@
+#!/bin/bash
+# quietmac bootstrap: find Python 3.9+ and run the tool from this checkout.
+# Works with macOS's bash 3.2; needs nothing but the Xcode command line tools.
+set -e
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+	dir="$(cd -P "$(dirname "$src")" && pwd)"
+	src="$(readlink "$src")"
+	case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+here="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+if ! /usr/bin/xcode-select -p >/dev/null 2>&1; then
+	echo "quietmac needs Apple's command line tools (they provide python3, git and swiftc)." >&2
+	echo "Install them with:  xcode-select --install   then run this again." >&2
+	exit 1
+fi
+py=/usr/bin/python3
+if ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+	py="$(command -v python3 || true)"
+	if [ -z "$py" ] || ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
+		echo "quietmac needs Python 3.9 or newer" >&2
+		exit 1
+	fi
+fi
+# -E/-s: ignore PYTHON* variables and user site-packages, so nothing outside
+# this checkout can change what runs.
+exec "$py" -E -s -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from quietmac.cli import main; sys.exit(main())' "$here" "$@"

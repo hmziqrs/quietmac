@@ -1,0 +1,8 @@
+# Installed by quietmac (module: warp-on-demand). Lets @USER@ start and stop
+# Cloudflare WARP's root daemon without a password, and nothing else.
+# Remove with: quietmac revert warp-on-demand
+@USER@ ALL=(root) NOPASSWD: \
+	/bin/launchctl enable system/com.cloudflare.1dot1dot1dot1.macos.warp.daemon, \
+	/bin/launchctl disable system/com.cloudflare.1dot1dot1dot1.macos.warp.daemon, \
+	/bin/launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.1dot1dot1dot1.macos.warp.daemon.plist, \
+	/bin/launchctl bootout system/com.cloudflare.1dot1dot1dot1.macos.warp.daemon
