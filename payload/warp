@@ -1,0 +1,112 @@
+#!/bin/sh
+# Cloudflare WARP on demand. Its root daemon is a KeepAlive LaunchDaemon that
+# runs health checks and captive-portal probes even while disconnected, and the
+# menu-bar app comes back as a login item, so keep both off unless asked for.
+#
+#   warp on       load the daemon, open the app, connect
+#   warp off      disconnect, quit the app, drop the login item, unload and
+#                 disable the daemon (stays off across reboots)
+#   warp status
+#
+# Loading/unloading the daemon needs root. /etc/sudoers.d/quietmac-warp allows
+# exactly those launchctl calls without a password; without that rule it falls
+# back to sudo in a terminal, or the macOS password dialog otherwise.
+# The dev.quietmac.warp-ondemand watcher does the same thing when you open or
+# quit the WARP app, so this is only needed from scripts or a terminal.
+# Installed by `quietmac apply warp-on-demand`.
+
+LABEL=com.cloudflare.1dot1dot1dot1.macos.warp.daemon
+PLIST=/Library/LaunchDaemons/$LABEL.plist
+APP="Cloudflare WARP"
+CLI=/usr/local/bin/warp-cli
+
+as_admin() {
+	if [ -t 0 ]; then
+		sudo /bin/sh -c "$1"
+	else
+		/usr/bin/osascript -e "do shell script \"$1\" with administrator privileges" >/dev/null
+	fi
+}
+
+priv() {
+	if sudo -n -l /bin/launchctl "$@" >/dev/null 2>&1; then
+		sudo -n /bin/launchctl "$@"
+	else
+		as_admin "/bin/launchctl $*"
+	fi
+}
+
+daemon_loaded() {
+	/bin/launchctl print "system/$LABEL" >/dev/null 2>&1
+}
+
+daemon_disabled() {
+	/bin/launchctl print-disabled system | grep -q "\"$LABEL\" => disabled"
+}
+
+status() {
+	if daemon_loaded; then
+		"$CLI" --accept-tos status 2>&1 | head -1
+	else
+		echo "WARP off (daemon not loaded)"
+	fi
+}
+
+on() {
+	if ! daemon_loaded; then
+		{ priv enable "system/$LABEL" && priv bootstrap system "$PLIST"; } || exit 1
+	fi
+	i=0
+	until "$CLI" --accept-tos status >/dev/null 2>&1; do
+		i=$((i + 1))
+		if [ "$i" -ge 40 ]; then
+			echo "warp: daemon did not come up" >&2
+			exit 1
+		fi
+		sleep 0.25
+	done
+	/usr/bin/open -ga "$APP"
+	"$CLI" --accept-tos connect >/dev/null
+	sleep 2
+	status
+}
+
+off() {
+	# Disconnect first so the daemon restores DNS and routes before it goes.
+	if daemon_loaded; then
+		"$CLI" --accept-tos disconnect >/dev/null 2>&1
+	fi
+	/usr/bin/osascript -e "if application \"$APP\" is running then quit application \"$APP\"" >/dev/null 2>&1
+	wait_for "! /usr/bin/pgrep -xq '$APP'"
+	if daemon_loaded; then
+		priv bootout "system/$LABEL"
+	fi
+	if ! daemon_disabled; then
+		priv disable "system/$LABEL" || exit 1
+	fi
+	wait_for "! daemon_loaded"
+	# Only once the app has fully exited: it can re-register this on its way out.
+	/usr/bin/osascript -e "tell application \"System Events\" to if exists login item \"$APP\" then delete login item \"$APP\"" >/dev/null 2>&1
+	if /usr/bin/osascript -e "tell application \"System Events\" to exists login item \"$APP\"" 2>/dev/null | grep -q true; then
+		echo "warp: could not remove the \"$APP\" login item; remove it in System Settings > General > Login Items" >&2
+	fi
+	status
+}
+
+# wait_for <shell condition>: poll for up to ~5s.
+wait_for() {
+	i=0
+	until eval "$1"; do
+		i=$((i + 1))
+		[ "$i" -ge 20 ] && return 1
+		sleep 0.25
+	done
+}
+
+case "$1" in
+on | off | status) "$1" ;;
+*)
+	echo "usage: warp on|off|status" >&2
+	exit 2
+	;;
+esac
