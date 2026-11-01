@@ -72,6 +72,18 @@ scan, 0.02% of a core**, about 55× less. A per-process lookup of all ~900
 processes on every scan cost ~4 ms, because each 5 s wake-up starts from a
 cold CPU.
 
+Later tuning, measured head to head:
+- The kernel filters the list to your own processes (`proc_listpids` with
+  `PROC_UID_ONLY`), in one call per scan instead of two.
+- Python starts with `-S` (no `site` module), and modules used only on
+  rare paths are imported lazily.
+- `gc.freeze()` runs after startup.
+
+The scan itself went from 140 µs to 100 µs. Memory went from 17.1 MB to
+14.8 MB, and startup from 122 ms to 71 ms of CPU. A bare Python loop that
+only sleeps costs nothing measurable per wake. What's left (about 0.4 to
+1 ms per wake, depending on the run) is mostly the scan on a cold CPU.
+
 A pid counts as settled only once it looks the same on two consecutive
 scans. launchd starts a daemon as a root `xpcproxy` process that then
 exec()s into the daemon under the same pid, so a first look can be
@@ -162,15 +174,14 @@ quietmac deliberately doesn't do any of that.
 
 ## Things that look like wins but aren't
 
-- **Killing fseventsd periodically.** It's root, it's restarted
-  immediately, and every watcher and Spotlight lose their event history and
-  rescan.
-- **Killing chronod, the Siri AI app or siriinferenced.** These are
-  measured respawn loops (above).
-- **Reaping the Continuity daemons** instead of turning the features off.
-  That churns too.
-- **Disabling SIP** to `bootout` system jobs. The cost is the Mac's security
-  model, and the settings above get most of the way there.
+- Killing fseventsd on a timer. It runs as root and comes straight back, and
+  every watcher and Spotlight lose their event history and rescan.
+- Killing chronod, the Siri AI app or siriinferenced. All three are measured
+  respawn loops (see above).
+- Reaping the Continuity daemons instead of turning the features off. That
+  churns too.
+- Disabling SIP so system jobs can be booted out. It costs the Mac's security
+  model, and the settings above already get most of the benefit.
 
 ## References
 

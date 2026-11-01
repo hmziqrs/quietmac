@@ -38,7 +38,7 @@ then verify it.
 
 ```sh
 xcode-select -p || xcode-select --install   # provides python3, git and swiftc
-git clone <this repo> && cd quietmac        # anywhere is fine
+git clone https://github.com/hmziqrs/quietmac.git && cd quietmac   # anywhere is fine
 ./bin/quietmac doctor
 ```
 
@@ -211,14 +211,14 @@ inside those folders, though: `cd ~` first.
 
 ## 6. Afterwards
 
-- **After every macOS update:** run `./bin/quietmac doctor`. Updates can reset
-  settings, rename daemons or reload agents. Re-apply anything it lists.
-- **Undo anything:** `./bin/quietmac revert <id>`. It restores the exact
-  previous values it recorded.
-- **Kill another daemon:** `quietmac probe <name>`, then
+- Run `./bin/quietmac doctor` after every macOS update. Updates can reset
+  settings, rename daemons or reload agents; re-apply whatever it lists.
+- `./bin/quietmac revert <id>` undoes a module and restores the exact values
+  it recorded.
+- To kill another daemon, run `quietmac probe <name>` first, then
   `quietmac reaper add <name>`.
-- **Clean up the migration** once the user has worked from the dev volume
-  for a while: `quietmac migrate cleanup` deletes the original copies.
+- Once the user has worked from the dev volume for a while,
+  `quietmac migrate cleanup` deletes the original copies.
 
 ## Adopting an existing setup
 
@@ -248,6 +248,7 @@ apply. They act whenever the daemons start.
 |---|---|
 | `this needs confirmation; re-run with --yes` | You're in a non-interactive shell. Ask the user, then pass `--yes`. |
 | `the administrator password dialog was cancelled` | The user clicked Cancel; nothing changed. Ask again or skip the module. |
+| `apply` exits with status 1 | At least one module wasn't done: not applicable here, refused, or stopped partway. The others still ran. A module that stopped partway shows `partial`, and `quietmac revert <id>` cleans it up. |
 | A module stays `partial` after apply | `quietmac plan <id>` and `quietmac status` show what's missing. The profile stays `partial` until the user clicks Install. |
 | WARP won't connect | `warp status`; `warp on` brings it up by hand. `quietmac status` flags a disabled daemon with no watcher. |
 | The dev volume isn't mounted after a reboot | `quietmac devvol mount`, then check `/etc/fstab` with `quietmac devvol status`. See docs/DEV-VOLUME.md for manual recovery. |

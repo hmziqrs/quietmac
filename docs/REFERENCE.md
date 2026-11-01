@@ -44,32 +44,39 @@ What each one changes, why, what you lose, and how it's undone:
 
 ## Principles
 
-- **SIP stays on.** Where launchd won't let a job be disabled, the reaper
-  kills it on sight. It touches only your own processes, has a never-kill
-  list, and backs off when something keeps relaunching a daemon.
-- **Ask, show, then do.** Every change is a list of steps. `plan` and
-  `--dry-run` print the exact commands, and every root script in full.
-  Nothing changes without confirmation (or `--yes` after you agreed).
-- **Reversible.** `apply` records previous values in
-  `~/.local/state/quietmac/state.json`. Every change, including root
-  scripts, is appended to `~/Library/Logs/quietmac/actions.log`.
-- **Measured, not folklore.** Each module states what it saved on a real
-  machine, and the docs list what was tried and rejected.
-- **Cheap to run.** The reaper costs ~1 ms of CPU per 5 s scan, and the WARP
-  watcher is event-driven (0% CPU).
+SIP stays on. Where launchd won't let a job be disabled, the reaper kills it on
+sight instead. It only touches your own processes, keeps a never-kill list, and
+backs off when something keeps relaunching a daemon.
+
+Every change is a list of steps, so `plan` and `--dry-run` can print the exact
+commands, with every root script in full. Nothing changes without confirmation,
+or `--yes` once you've agreed.
+
+`apply` records previous values in `~/.local/state/quietmac/state.json`, which
+is how `revert` restores them. Every change, root scripts included, is also
+appended to `~/Library/Logs/quietmac/actions.log`.
+
+Each module states what it saved on a real machine, and
+[BACKGROUND.md](BACKGROUND.md) lists what was tried and rejected.
+
+The reaper costs about 1 ms of CPU per 5-second scan, and the WARP watcher only
+wakes when an app launches or quits.
 
 ## Why Python, Swift and sh
 
-- **Python 3 (standard library only)** for the tool and the reaper.
-  `/usr/bin/python3` comes with the Xcode command line tools, which every
-  developer Mac has (git needs them), so there's nothing to install. It also
-  handles plists, JSON, careful file copies and state well. The code
-  targets 3.9, the version the command line tools ship.
-- **Swift** for the WARP watcher. It needs AppKit key-value observing to
-  react to an app launching or quitting with zero polling. It's compiled
-  on install (`swiftc`, part of the command line tools).
-- **POSIX sh** for the `warp on|off|status` command (instant start-up) and
-  the `bin/quietmac` launcher (works with macOS's bash 3.2).
+The tool and the reaper are Python 3, standard library only.
+`/usr/bin/python3` comes with the Xcode command line tools, which every
+developer Mac already has because git needs them, so there's nothing to
+install. Python also handles plists, JSON, careful file copies and state
+well. The code targets 3.9, the version the command line tools ship.
+
+The WARP watcher is Swift, because it needs AppKit key-value observing to
+react to an app launching or quitting without polling. It's compiled on
+install with `swiftc`, which is also part of the command line tools.
+
+The `warp on|off|status` command and the `bin/quietmac` launcher are shell
+scripts: the first for instant start-up, the second so it runs on macOS's
+bash 3.2.
 
 Node or bun would need installing first, and a compiled CLI would need a
 build step just to read a plist.
@@ -97,8 +104,18 @@ repository breaks nothing:
 ## Tests
 
 ```sh
-/usr/bin/python3 -m unittest discover -s tests -v
+/usr/bin/python3 -m unittest discover -s tests -v   # fast, never touches the system
+/usr/bin/python3 tests/integration.py               # opt-in, ~1 minute: real macOS machinery, cleaned up after
 ```
+
+`tests/integration.py` uses a throwaway APFS container inside a disk image,
+a temporary LaunchAgent and osascript without admin rights. It checks:
+
+- dev-volume create and destroy, including the safety refusals
+- migration: a failed switch, resume, rollback and cleanup
+- module error handling and partial reverts
+- the LaunchAgent restart helper
+- the sudoers script's round trip through AppleScript
 
 The unit tests never touch the system. The dev volume, migration, rollback,
 cleanup and destroy were also tested end to end against an APFS container

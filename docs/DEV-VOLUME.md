@@ -95,13 +95,13 @@ Each step is written to `~/.local/state/quietmac/state.json` before it
 happens. An interrupted run is resumed by running the same command again,
 or undone with `migrate rollback`.
 
-- **`quietmac migrate rollback ~/os`** restores the original backup. It
-  refuses if files changed on the volume since the move.
-- **`quietmac migrate rollback ~/os --keep-changes`** copies the current files
+- `quietmac migrate rollback ~/os` restores the original backup. It refuses
+  if files changed on the volume since the move.
+- `quietmac migrate rollback ~/os --keep-changes` copies the current files
   back and verifies them instead. The dev-volume copy is parked as
   `~/dev/os.rolledback-<date>`.
-- **`quietmac migrate cleanup`** deletes backups and parked copies, after
-  listing them with sizes and asking.
+- `quietmac migrate cleanup` lists backups and parked copies with their sizes,
+  asks, then deletes them.
 
 If quietmac's own checkout is inside a folder being moved, it re-runs itself
 from a temporary copy.
@@ -145,7 +145,8 @@ folder.
 quietmac migrate rollback ~/os ~/ps   # or move things off by hand
 quietmac cache restore bun
 quietmac migrate cleanup
-quietmac devvol destroy               # refuses while anything still lives there; --force deletes leftovers
+quietmac devvol destroy               # refuses while anything still lives there, or while it's unmounted
+                                      # (it can't check it's empty); --force overrides both
 ```
 
 ## Manual recovery (if quietmac itself is unavailable)
