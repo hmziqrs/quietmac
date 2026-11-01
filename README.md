@@ -16,6 +16,7 @@ Measured on a MacBook Pro M3 Max running macOS 27:
 
 ```sh
 xcode-select -p || xcode-select --install   # the only prerequisite
+git clone https://github.com/hmziqrs/quietmac.git && cd quietmac
 ./bin/quietmac detect                       # what this Mac has (read-only)
 ./bin/quietmac setup                        # asks what you use, shows the plan, applies your choices
 ```
@@ -34,18 +35,18 @@ Using a coding agent? Point it at [INSTALL.md](INSTALL.md).
 | [repos-volume.sh](https://github.com/elithrar/dotfiles/blob/main/repos-volume.sh) | Creates the volume, but refuses if files are already there; moving projects is manual. | Same volume design, plus migration that verifies the copy, keeps a backup and can roll back. Moves bun/pnpm caches (clones and hard links only work within one volume) and keeps Claude Code project history. |
 | Flipping settings by hand | No record, no undo, and macOS updates silently reset some of them. | Records previous values; `revert` restores them, and `doctor` flags anything an update reset. |
 
-What it does differently:
+quietmac asks before it changes anything, and `plan` prints every command,
+root scripts included, before it runs. It records the previous value of each
+setting it touches, so `revert` puts back exactly what was there. Every change
+is logged to `~/Library/Logs/quietmac/actions.log`.
 
-- **Asks first.** `plan` prints every command, including root scripts, before
-  anything runs.
-- **Exactly reversible.** It records the previous value of everything it
-  changes, and logs every change to `~/Library/Logs/quietmac/actions.log`.
-- **Measured, not folklore.** Each module says what it saved. Things that
-  backfired in testing are blocked.
-- **Cheap to run.** The reaper reads processes through libproc and looks up
-  only new ones: ~1 ms of CPU per 5 s scan (0.02% of a core), against ~57 ms
-  for spawning `ps`. The WARP watcher reacts to
-  events and uses 0% CPU.
+Each module states what it saved on a real machine. Things that backfired in
+testing, like killing chronod or the Siri AI app, are blocked outright.
+
+It's also cheap to run. The reaper reads the process table through libproc and
+only looks up processes it hasn't seen before. That costs about 1 ms of CPU per
+5-second scan (0.02% of a core); spawning `ps` instead costs about 57 ms. The
+WARP watcher waits for app launch events and uses no CPU in between.
 
 ## Limits
 
@@ -63,5 +64,5 @@ What it does differently:
 - [docs/MODULES.md](docs/MODULES.md): every module, what it changes, and its undo
 - [docs/DEV-VOLUME.md](docs/DEV-VOLUME.md): the dev volume, migration and caches
 - [docs/BACKGROUND.md](docs/BACKGROUND.md): what was measured, and what didn't work
-- [docs/BATTERY.md](docs/BATTERY.md): battery drain history, and what each change saves in watts
+- [docs/measurements/](docs/measurements/): the raw data (CSV) behind every number, including a week of battery history
 - [docs/REFERENCE.md](docs/REFERENCE.md): commands, layout, tests

@@ -1,0 +1,4 @@
+load,system_draw_watts,cost_watts,how_measured
+idle (this session's terminal and browser open),7.9 to 8.2,,"battery InstantAmperage x Voltage via ioreg, 1 s samples over 40 s, on battery"
+one busy efficiency core (taskpolicy -b yes),7.9 to 8.2,under 0.3 (not resolvable),"same method; no visible change from idle"
+one busy performance core (yes),10.9,about 3,"same method; the reading updates slowly, so plateau values are used"

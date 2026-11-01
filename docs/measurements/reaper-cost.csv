@@ -1,0 +1,8 @@
+variant,cpu_per_scan_ms,percent_of_one_core_at_5s_poll,memory_mb,how_measured
+ps-based reaper (spawns ps -axo every scan),57.3,1.15,10.7,"rusage incl. children, 130 s vs 10 s runs at the 5 s poll"
+libproc reaper looking up every process every scan,4.02,0.08,,"rusage, 25 s vs 5 s runs at a 0.5 s poll"
+libproc reaper looking up only new processes,1.05,0.021,16.4,"rusage, 130 s vs 10 s runs at the 5 s poll"
+same + PROC_UID_ONLY + python -S + lazy imports + gc.freeze,0.60,0.012,14.8,"rusage, 130 s vs 10 s runs at the 5 s poll; run-to-run noise is about +-0.5 ms"
+scan code only: before vs after the last row's changes,0.137 -> 0.095,,16.7 -> 14.3,"median of 10 x 500 warm scans, both versions in one process; memory 3 s after start"
+native C lower bound (same libproc calls),0.478,,,"200 warm scans of the full process table, -O2"
+bare Python sleep loop (floor),~0,~0,9.5,"rusage, 130 s vs 10 s runs"

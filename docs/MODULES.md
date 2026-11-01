@@ -53,14 +53,15 @@ Commands: `quietmac reaper status|log|add|remove|pause|resume`, and
 `quietmac probe <name>`, which kills a daemon for 90 s and counts respawns
 before you add it.
 
-**Measured respawn loops, so never reap these:** chronod (relaunched every
-~5 s); the "Siri AI" app (`com.apple.campo`, relaunched every ~10 s, and each
-relaunch drags siriinferenced and mediaanalysisd back); siriinferenced.
+Never reap these, because they're measured respawn loops: chronod
+(relaunched about every 5 s), the "Siri AI" app (`com.apple.campo`,
+relaunched about every 10 s, and each relaunch drags siriinferenced and
+mediaanalysisd back), and siriinferenced.
 
-**Measured regression, now handled by watch mode:** the first version of
-the reaper gave up on mediaanalysisd outright 10 minutes after a reboot.
-mediaanalysisd and the root ANECompilerService then used 4 min 38 s and
-4 min 37 s of CPU over the next 4.5 hours.
+Watch mode exists because giving up is expensive. A reaper that stopped
+killing mediaanalysisd 10 minutes after a reboot let it and the root
+ANECompilerService use 4 min 38 s and 4 min 37 s of CPU over the next
+4.5 hours.
 
 `nc-widgets-remove` (guided): remove the widgets from Notification Center
 and the desktop, so chronod, which can't be killed, has nothing to refresh.
@@ -98,7 +99,10 @@ time it starts.
   - A launch within 90 s of login counts as an auto-start, and the app is
     quit.
 - `/etc/sudoers.d/quietmac-warp` allows exactly four `launchctl` command
-  lines without a password. Other `sudo` commands still ask.
+  lines without a password. Other `sudo` commands still ask. Root writes
+  the rule itself, into a root-only temporary file, and validates it there
+  before installing it. The rule never passes through a file your own
+  programs could edit between the check and the install.
 - `warp on|off|status` does the same from a terminal.
 
 Revert removes all of it and gives WARP its normal always-on daemon back.
