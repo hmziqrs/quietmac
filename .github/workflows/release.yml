@@ -20,7 +20,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: The tag matches quietmac.__version__
         run: |
           v=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+)\"', open('quietmac/__init__.py').read()).group(1))")
