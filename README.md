@@ -63,4 +63,5 @@ What it does differently:
 - [docs/MODULES.md](docs/MODULES.md): every module, what it changes, and its undo
 - [docs/DEV-VOLUME.md](docs/DEV-VOLUME.md): the dev volume, migration and caches
 - [docs/BACKGROUND.md](docs/BACKGROUND.md): what was measured, and what didn't work
+- [docs/BATTERY.md](docs/BATTERY.md): battery drain history, and what each change saves in watts
 - [docs/REFERENCE.md](docs/REFERENCE.md): commands, layout, tests

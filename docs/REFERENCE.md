@@ -16,6 +16,7 @@ quietmac revert <ids>             undo, restoring the recorded values
 quietmac status                   what's applied, and drift
 quietmac doctor [--fix]           prerequisites, and drift after macOS updates
 quietmac measure [--since-boot]   CPU now, fseventsd's cost, reaper health
+quietmac battery [--json]         battery drain history from the power log (last ~7 days)
 quietmac reaper status|log|add|remove|pause|resume
 quietmac probe <name>             will this daemon stay dead if reaped?
 quietmac devvol status|create|mount|destroy

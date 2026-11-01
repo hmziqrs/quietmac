@@ -190,5 +190,30 @@ class QuestionTests(unittest.TestCase):
         self.assertFalse(asked["warp"])
 
 
+class BatteryTests(unittest.TestCase):
+    LOG = """\
+2026-10-25 10:00:00 +0500 Assertions          \tSummary- [System: PrevIdle kDisp] Using Batt(Charge: 90)
+2026-10-25 11:00:00 +0500 Assertions          \tSummary- [System: PrevIdle kDisp] Using Batt(Charge: 80)
+2026-10-25 11:00:05 +0500 Sleep               \tEntering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:80%) 3600 secs
+2026-10-25 11:00:07 +0500 Wake Requests       \t[*process=dasd request=SleepService deltaSecs=1068 wakeAt=2026-10-25 11:18:00 info="com.apple.dasd:501:com.apple.GenerativeFunctions"]
+2026-10-25 12:00:05 +0500 DarkWake            \tDarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake wifibt/ Using BATT (Charge:79%) 5 secs
+2026-10-25 13:00:05 +0500 Wake                \tWake from Deep Idle [CDNVA] : due to UserActivity Assertion Using BATT (Charge:78%) 60 secs
+2026-10-25 14:00:05 +0500 Assertions          \tSummary- [System: PrevIdle kDisp] Using Batt(Charge: 68)
+2026-10-25 15:00:05 +0500 Assertions          \tSummary- [System: PrevIdle kDisp] Using AC(Charge: 70)
+"""
+
+    def test_awake_and_asleep_are_separated(self):
+        from quietmac import battery
+        a = battery.analyze(self.LOG)
+        d = a["days"]["2026-10-25"]
+        # awake: 10:00-11:00 (10%) + 13:00-14:00 (10%) + 5 s; asleep: 11:00-13:00 (2%)
+        self.assertAlmostEqual(d["awake_h"], 2.0, places=2)
+        self.assertAlmostEqual(d["awake_pct"], 20)
+        self.assertAlmostEqual(d["asleep_h"], 2.0, places=2)
+        self.assertAlmostEqual(d["asleep_pct"], 2)
+        self.assertEqual(len(a["sessions"]), 1)
+        self.assertEqual(a["wake_requests"][0], ("com.apple.GenerativeFunctions", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
