@@ -10,7 +10,7 @@ import sys
 import tempfile
 from typing import Any, Dict, List, Optional
 
-from . import cache, core, detect, devvol, measure, migrate, questions, reaper
+from . import battery, cache, core, detect, devvol, measure, migrate, questions, reaper
 from .modules import ALL, BY_ID, get
 from .modules.base import APPLIED, MANUAL, NOT_APPLIED, PARTIAL, Context
 
@@ -402,6 +402,15 @@ def cmd_measure(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_battery(a: argparse.Namespace) -> int:
+    res = battery.report(a.capacity_wh)
+    if a.json:
+        _print_json(res)
+    else:
+        core.say(battery.render(res))
+    return 0
+
+
 def cmd_devvol(a: argparse.Namespace) -> int:
     st = core.load_state()
     if a.action == "status":
@@ -625,6 +634,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seconds", type=int, default=30)
     s.add_argument("--top", type=int, default=20)
     s.add_argument("--since-boot", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s = add("battery", cmd_battery, "battery drain history from the power log: per day, per unplugged session")
+    s.add_argument("--capacity-wh", type=float, help="battery capacity to convert %%/hour to watts")
     s.add_argument("--json", action="store_true")
     s = add("devvol", cmd_devvol, "the dev volume: status, create, mount, destroy")
     s.add_argument("action", choices=["status", "create", "mount", "destroy"])
