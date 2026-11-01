@@ -598,18 +598,29 @@ def cmd_adopt(a: argparse.Namespace) -> int:
         st["reaper"]["custom"] = sorted(set(st["reaper"]["custom"]) | set(custom))
         core.save_state(st)
     mods = list(dict.fromkeys(plan_mods))
+    rc = 0
     if mods:
-        _run_modules(argparse.Namespace(modules=mods, opt=opts, dry_run=False, yes=True), revert=False)
+        # adopting=1 tells the reaper modules not to warn about the hand-made reaper: it's retired below
+        rc = _run_modules(argparse.Namespace(modules=mods, opt=opts + ["adopting=1"], dry_run=False, yes=True),
+                          revert=False)
     elif custom:
         reaper.write_conf(core.load_state())
         core.run_steps(reaper.ensure_agent_steps(), "start the reaper")
-    for lg in legacy:
-        steps = [core.Step("stop %s" % lg["label"], argv=["/bin/launchctl", "bootout", core.gui(lg["label"])], allow_fail=True),
-                 core.Step("back up %s" % lg["plist"], fn=lambda p=lg["plist"]: os.rename(p, p + ".quietmac-backup"))]
-        core.run_steps(steps, "retire the hand-made reaper")
+    if rc:
+        core.warn("a reaper module failed, so the hand-made reaper keeps running. Fix the error above and run "
+                  "`quietmac adopt` again.")
+    else:
+        for lg in legacy:
+            steps = [core.Step("stop %s" % lg["label"], argv=["/bin/launchctl", "bootout", core.gui(lg["label"])],
+                               allow_fail=True),
+                     core.Step("back up %s" % lg["plist"], fn=lambda p=lg["plist"]: os.rename(p, p + ".quietmac-backup"))]
+            core.run_steps(steps, "retire the hand-made reaper")
     if adopt_warp:
-        _run_modules(argparse.Namespace(modules=["warp-on-demand"], opt=["replace_legacy=1"], dry_run=False, yes=True),
-                     revert=False)
+        rc = _run_modules(argparse.Namespace(modules=["warp-on-demand"], opt=["replace_legacy=1"], dry_run=False,
+                                             yes=True), revert=False) or rc
+    if rc:
+        core.say(core.yellow("\nadopt finished with errors (see above)."))
+        return 1
     core.say(core.green("\nadopted.") + " The old scripts in ~/.local/bin are left in place but no longer run.")
     return 0
 

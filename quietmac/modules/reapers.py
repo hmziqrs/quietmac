@@ -19,6 +19,8 @@ from .. import core, reaper
 from ..core import Step
 from .base import APPLIED, NOT_APPLIED, PARTIAL, Context, Module
 
+_WARNED = set()  # hand-made reapers already warned about in this run
+
 
 class ReaperModule(Module):
     category = "Background daemons (reaper)"
@@ -56,7 +58,8 @@ class ReaperModule(Module):
         new_labels = [l for l in self.labels if not disabled.get(l)]
         st = ctx.state
         for lg in ctx.facts.get("reaper", {}).get("legacy", []):
-            if lg["loaded"]:
+            if lg["loaded"] and ctx.opt("adopting") != "1" and lg["label"] not in _WARNED:
+                _WARNED.add(lg["label"])  # once per run, not once per module
                 core.warn("the hand-made reaper %s is still running next to quietmac's; `quietmac adopt` retires it "
                           "(it costs ~1%% of a core on its own)" % lg["label"])
 

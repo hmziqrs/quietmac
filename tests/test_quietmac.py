@@ -177,6 +177,30 @@ class AuditRegressionTests(unittest.TestCase):
         reloc.assert_called_once_with(["/x/os", "/x/dev/os"])
 
 
+    def _adopt_with(self, run_rc):
+        from unittest import mock
+        legacy = [{"label": "com.example.daemon-reaper", "plist": "/nonexistent/x.plist", "loaded": True,
+                   "names": ["appstoreagent"]}]
+        facts = {"widgets": {"installed": []}, "warp": {"installed": False, "legacy_watchers": [], "legacy_sudoers": []}}
+        with mock.patch.object(cli.detect, "detect", return_value=facts), \
+                mock.patch.object(reaper, "legacy_agents", return_value=legacy), \
+                mock.patch.object(cli, "_run_modules", return_value=run_rc) as run, \
+                mock.patch.object(core, "run_steps") as steps:
+            rc = cli.main(["adopt", "--yes"])
+        return rc, run, steps
+
+    def test_adopt_keeps_the_old_reaper_when_a_module_fails(self):
+        # the fix: adopt used to retire the hand-made reaper even when the new modules failed to apply
+        rc, run, steps = self._adopt_with(1)
+        self.assertEqual(rc, 1)
+        self.assertIn("adopting=1", run.call_args[0][0].opt)
+        steps.assert_not_called()
+
+    def test_adopt_retires_the_old_reaper_on_success(self):
+        rc, run, steps = self._adopt_with(0)
+        self.assertEqual(rc, 0)
+        self.assertEqual(steps.call_args[0][1], "retire the hand-made reaper")
+
 class ModuleTests(unittest.TestCase):
     def test_ids_unique_and_documented(self):
         self.assertEqual(len(ALL), len(BY_ID))

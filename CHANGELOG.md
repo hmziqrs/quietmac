@@ -6,6 +6,15 @@ All notable changes to quietmac. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `quietmac adopt` stopped the hand-made reaper even when the new reaper
+  modules failed to apply, which left nothing killing the daemons. It now
+  keeps the old reaper running and exits with an error.
+- `quietmac adopt` printed the "hand-made reaper is still running" warning
+  once per module. It no longer prints it at all, since adopt retires that
+  reaper itself. Applying several reap modules by hand warns once.
+
 ## [0.1.0] - 2026-11-01
 
 First release.
