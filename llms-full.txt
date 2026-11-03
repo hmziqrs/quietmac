@@ -529,9 +529,39 @@ A separate APFS volume lets you switch both off **for code only**:
 - Spotlight indexing off on that volume only, so Spotlight keeps working
   everywhere else.
 
-**When it's worth it:** run `quietmac measure`. If fseventsd's average is
-well above ~2% of a core after a few days of normal work, do it. Below that
-(the test Mac was at 0.48% after 5 hours), it saves very little.
+**What it saves, measured:** no fseventsd CPU. On macOS 27 (M3 Max,
+2026-11-02), the same clean `cargo build` (175 crates, about 2,000 files in
+`target/`, 12.5 s) ran three times on the Data volume and three times on a
+no_log dev volume, alternating, with idle windows in between to subtract
+the background. Each build produced about 4,000 FSEvents on both volumes,
+and fseventsd spent about 0.9 s of CPU per build on both (0.84 to 0.95 s on
+Data, 0.95 to 1.08 s on the dev volume). fseventsd's work is taking events
+from the kernel and delivering them to watchers, and no_log doesn't change
+that. The log it skips is small: no build added more than two log files to
+the Data volume's `.fseventsd`.
+
+So the volume is worth it only for Spotlight: it keeps code out of the
+index while Spotlight stays on for everything else. If Spotlight is already
+off (`quietmac list` shows `spotlight-off`), skip it.
+
+**Zero events instead of no log.** fseventsd also honors an undocumented
+`.fseventsd/ignore` file (found in its binary on macOS 27). It only checks
+for it when `no_log` is absent. With `ignore`, fseventsd logs "will be
+completely ignored" and the volume delivers no FSEvents at all: the same
+clean build cost fseventsd nothing above its idle rate, against about 1 s
+of CPU on the Data volume. The price is that folder watchers on that volume
+see nothing: Node's `fs.watch`, chokidar, Vite and Next hot reload, Rust's
+`notify` (cargo watch, bacon), Python's watchdog and watchfiles, and
+editors. Watches on single files (kqueue, which Go's fsnotify uses) still
+work. It still doesn't buy battery life: with about ten agents running,
+fseventsd averaged around 1% of one core on the test Mac. quietmac doesn't
+set `ignore`.
+
+**macOS 27 blocks `/etc/fstab`.** The system policy denies creating it, even
+as root (`(Sandbox) System Policy: touch deny(1) file-write-create
+/private/etc/fstab`). `devvol create` tries fstab first and stops before
+creating anything. A dev volume set up by hand on macOS 27 has no fstab
+line, so nothing mounts it at your folder after a reboot.
 
 ## What `quietmac devvol create` does
 
@@ -1040,6 +1070,14 @@ comes from people running many agents in parallel, who saw fseventsd climb
 over days. Verified before building it: live FSEvents delivery keeps
 working on a `no_log` volume (`fs.watch`: 41 vs 42 events). See
 [DEV-VOLUME.md](DEV-VOLUME.md).
+
+Measured later, on 2026-11-02: it doesn't lower fseventsd's CPU. A clean
+`cargo build` (175 crates, about 4,000 FSEvents) cost fseventsd about 0.9 s
+of CPU on the Data volume and on a no_log volume alike, over three
+alternating runs each. Background events from other agents were counted
+separately and subtracted using idle windows. fseventsd's cost is per event
+delivered, not the log. With Spotlight already off, the volume saves
+nothing; it only helps when you want Spotlight on for everything but code.
 
 ## Apple Intelligence: profile versus deletion
 

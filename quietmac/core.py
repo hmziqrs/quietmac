@@ -206,7 +206,8 @@ def admin(script: str, reason: str) -> str:
         if r.rc != 0 and "-128" in r.err:
             raise AdminError("the administrator password dialog was cancelled")
     if not r.ok:
-        raise AdminError("root step failed (%s): %s" % (reason, (r.err or r.out).strip()), r.out)
+        # osascript drops stdout on failure; markers a script also printed to stderr are in r.err
+        raise AdminError("root step failed (%s): %s" % (reason, (r.err or r.out).strip()), r.out + "\n" + r.err)
     return r.out
 
 

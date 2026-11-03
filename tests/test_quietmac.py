@@ -264,7 +264,10 @@ class DevVolumeTests(unittest.TestCase):
         for line in script.splitlines():
             self.assertNotIn(" && ", line, line)
         self.assertIn("rw,nobrowse,owners", script)
-        self.assertLess(script.index("QUIETMAC_UUID="), script.index("FSTAB\""))  # uuid printed before fstab edits
+        # fstab is touched before anything is created (macOS 27 denies it); the uuid is printed before the append
+        self.assertLess(script.index('touch "$FSTAB"'), script.index("addVolume"))
+        self.assertLess(script.index("QUIETMAC_UUID="), script.index('>> "$FSTAB"'))
+        self.assertIn('echo "QUIETMAC_UUID=$UUID" >&2', script)  # osascript drops stdout on failure
 
     def test_validate_rejects_bad_input(self):
         with self.assertRaises(core.QuietmacError):
@@ -356,6 +359,7 @@ class BatteryTests(unittest.TestCase):
         self.assertAlmostEqual(d["asleep_pct"], 2)
         self.assertEqual(len(a["sessions"]), 1)
         self.assertEqual(a["wake_requests"][0], ("com.apple.GenerativeFunctions", 1))
+
 
 
 if __name__ == "__main__":

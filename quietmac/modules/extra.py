@@ -43,8 +43,9 @@ class DevVolumeModule(Module):
     admin = True
     summary = ("creates an APFS volume (shares free space, no fixed size) mounted at ~/dev by /etc/fstab, with "
                "fseventsd's event log and Spotlight off on it. Then move folders in with `quietmac migrate`.")
-    benefit = ("fseventsd and Spotlight stop doing work for node_modules/target/build churn. Worth it when many agents "
-               "or builds run in parallel and fseventsd climbs over days. File watching keeps working.")
+    benefit = ("keeps code and build output out of Spotlight while Spotlight stays on elsewhere. It does not lower "
+               "fseventsd's CPU: a clean cargo build cost fseventsd ~0.9 s on either volume (macOS 27). Skip it if "
+               "Spotlight is already off. File watching keeps working.")
     cost = ("the volume is not encrypted with your login password (FileVault covers the main volume only), and "
             "Spotlight won't find files on it")
     options = {"name": "volume name (default Dev)", "mount": "mount folder (default ~/dev)",

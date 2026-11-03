@@ -7,13 +7,25 @@ All notable changes to quietmac. The format follows
 ## [Unreleased]
 
 ### Fixed
-
+- `devvol create` writes `/etc/fstab` before it creates the volume. macOS 27
+  denies creating that file even as root, and the old order left an
+  unmounted volume behind.
+- When the password dialog's script failed, `devvol create` lost the new
+  volume's UUID (osascript drops stdout on failure) and said "Nothing was
+  created" when a volume existed. The UUID now also goes to stderr.
 - `quietmac adopt` stopped the hand-made reaper even when the new reaper
   modules failed to apply, which left nothing killing the daemons. It now
   keeps the old reaper running and exits with an error.
 - `quietmac adopt` printed the "hand-made reaper is still running" warning
   once per module. It no longer prints it at all, since adopt retires that
   reaper itself. Applying several reap modules by hand warns once.
+
+### Changed
+- The dev volume docs give the measured result: no fseventsd CPU saving for
+  a clean `cargo build`. Its only benefit is keeping code out of Spotlight.
+- DEV-VOLUME.md documents fseventsd's undocumented `.fseventsd/ignore`
+  switch (zero events on the volume, folder watchers go blind) and what it
+  saves.
 
 ## [0.1.0] - 2026-11-01
 

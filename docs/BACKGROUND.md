@@ -151,6 +151,14 @@ over days. Verified before building it: live FSEvents delivery keeps
 working on a `no_log` volume (`fs.watch`: 41 vs 42 events). See
 [DEV-VOLUME.md](DEV-VOLUME.md).
 
+Measured later, on 2026-11-02: it doesn't lower fseventsd's CPU. A clean
+`cargo build` (175 crates, about 4,000 FSEvents) cost fseventsd about 0.9 s
+of CPU on the Data volume and on a no_log volume alike, over three
+alternating runs each. Background events from other agents were counted
+separately and subtracted using idle windows. fseventsd's cost is per event
+delivered, not the log. With Spotlight already off, the volume saves
+nothing; it only helps when you want Spotlight on for everything but code.
+
 ## Apple Intelligence: profile versus deletion
 
 The test Mac already had Apple Intelligence off through a configuration

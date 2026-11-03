@@ -143,18 +143,20 @@ def create_script(name: str, mount: str, container: str, sandbox: bool = False) 
     lines = [
         "set -eu",
         "NAME=%s MP=%s CONT=%s FSTAB=%s" % (q(name), q(mount), q(container), q(str(FSTAB))),
+        "# fstab first: macOS 27's system policy denies creating /etc/fstab, even for root, and then nothing",
+        "# should have been created yet",
+        'if [ -f "$FSTAB" ]; then /bin/cp -p "$FSTAB" "$FSTAB.quietmac-backup"; else /usr/bin/touch "$FSTAB"; fi',
         'OUT=$(/usr/sbin/diskutil apfs addVolume "$CONT" APFS "$NAME" -nomount 2>&1) || { echo "$OUT" >&2; exit 1; }',
         "DEV=$(printf '%s\\n' \"$OUT\" | /usr/bin/sed -n 's/.*\\(disk[0-9][0-9]*s[0-9][0-9]*\\).*/\\1/p' | /usr/bin/tail -1)",
         '[ -n "$DEV" ] || { echo "could not find the new volume in: $OUT" >&2; exit 1; }',
         'UUID=$(/usr/sbin/diskutil info -plist "$DEV" | /usr/bin/plutil -extract VolumeUUID raw -o - -)',
-        'echo "QUIETMAC_DEV=$DEV"',
-        'echo "QUIETMAC_UUID=$UUID"',
+        'echo "QUIETMAC_DEV=$DEV"; echo "QUIETMAC_DEV=$DEV" >&2',
+        'echo "QUIETMAC_UUID=$UUID"; echo "QUIETMAC_UUID=$UUID" >&2',
         '/bin/mkdir -p "$MP"',
     ]
     if not sandbox:
         lines += ['/usr/sbin/chown root:wheel "$MP"  # while unmounted, writes here fail loudly', '/bin/chmod 000 "$MP"']
     lines += [
-        'if [ -f "$FSTAB" ]; then /bin/cp -p "$FSTAB" "$FSTAB.quietmac-backup"; else /usr/bin/touch "$FSTAB"; fi',
         "printf '%%s\\nUUID=%%s %%s apfs rw,nobrowse,owners\\n' %s \"$UUID\" \"$MP\" >> \"$FSTAB\"" % q(MARK),
         'echo QUIETMAC_FSTAB_OK',
     ]
